@@ -1,0 +1,204 @@
+/*
+ SYSソースファイル
+ * File:   sys_main.cpp
+ * Author: H.Seiyama
+ */
+
+/* インクルード宣言 */
+#include "sys_type.h"
+#include "tgt_type.h"
+#include "MsTimer2.h"
+
+/* 定数定義 */
+#define SYS_TIME_INTR_TIMER2	( 1 )											// Timer2割込み間隔 1ms
+#define SYS_TIME_CYCLE_10MS		( SYS_TASK_CYCLE_10MS / SYS_TASK_CYCLE_1MS )	// 10ms周期タスク起動判定回数
+#define SYS_TIME_CYCLE_100MS	( SYS_TASK_CYCLE_100MS / SYS_TASK_CYCLE_10MS )	// 100ms周期タスク起動判定回数
+#define SYS_TIME_CYCLE_1000MS	( SYS_TASK_CYCLE_1000MS / SYS_TASK_CYCLE_100MS )
+																				// 1000ms周期タスク起動判定回数
+#define SYS_TIME_CYCLE_HARD_TM	( SYS_TASK_CYCLE_HARD_TM / SYS_TASK_CYCLE_1MS )	// HardTime周期タスク起動判定回数
+#define SYS_LIB_TIMER_STOP		( 0xFFFFFFFF )									// タイマ停止状態(タイマ操作用)
+
+/* スタティック変数定義 */
+static volatile u_long	ulS_Ctimer_sys;											// システムタイマ(LSB:1ms)
+static volatile u_char	ubS_Ctimer_cycle_10ms;									// 10ms周期タスク起動判定用カウンタ
+static u_char			ubS_Ctimer_cycle_100ms;									// 100ms周期タスク起動判定用カウンタ
+static u_char			ubS_Ctimer_cycle_1000ms;								// 1000ms周期タスク起動判定用カウンタ
+static volatile u_short	usS_Ctimer_cycle_hard_tm;								// HardTime周期タスク起動判定用カウンタ
+
+/* プロトタイプ宣言 */
+static void sys_intr_timer2( void );											// Timer2割込み関数
+
+/*
+ * セットアップ関数
+ *
+ * 引数:
+ * なし
+ *
+ * 復帰値:
+ * なし
+ */
+void setup( void ){
+	/* タイマ変数の初期化 */
+	ulS_Ctimer_sys = 0;															// システムタイマ(LSB:1ms)
+	ubS_Ctimer_cycle_10ms = 0;													// 10ms周期タスク起動判定用カウンタ
+	ubS_Ctimer_cycle_100ms = 0;													// 100ms周期タスク起動判定用カウンタ
+	ubS_Ctimer_cycle_1000ms = 0;												// 1000ms周期タスク起動判定用カウンタ
+	usS_Ctimer_cycle_hard_tm = 0;												// HardTime周期タスク起動判定用カウンタ
+
+	/* TGT初期化関数 */
+	tgt_init();
+
+	/* MsTimer2 初期設定*/
+	MsTimer2::set( SYS_TIME_INTR_TIMER2, sys_intr_timer2 );
+	MsTimer2::start();
+}
+
+/*
+ * ループ関数
+ *
+ * 引数:
+ * なし
+ *
+ * 復帰値:
+ * なし
+ */
+void loop( void ){
+	/* 10ms経過した場合 */
+	if( ubS_Ctimer_cycle_10ms >= SYS_TIME_CYCLE_10MS ){
+		ubS_Ctimer_cycle_10ms = 0;												// 10ms周期タスク起動判定用カウンタ
+		ubS_Ctimer_cycle_100ms++;												// 100ms周期タスク起動判定用カウンタ
+		
+		/* 10ms周期タスクTGTメイン関数 */
+		tgt_task_main_10ms();
+		
+		/* 100ms経過した場合 */
+		if( ubS_Ctimer_cycle_100ms >= SYS_TIME_CYCLE_100MS ){
+			ubS_Ctimer_cycle_100ms = 0;											// 100ms周期タスク起動判定用カウンタ
+			ubS_Ctimer_cycle_1000ms++;											// 1000ms周期タスク起動判定用カウンタ
+			
+			/* 100ms周期タスクTGTメイン関数 */
+			tgt_task_main_100ms();
+			
+			/* 1000ms経過した場合 */
+			if( ubS_Ctimer_cycle_1000ms >= SYS_TIME_CYCLE_1000MS ){
+				ubS_Ctimer_cycle_1000ms = 0;									// 1000ms周期タスク起動判定用カウンタ
+				
+				/* 1000ms周期タスクTGTメイン関数 */
+				tgt_task_main_1000ms();
+			}
+			/* 上記以外 */
+			else{
+				/* 処理なし */
+			}
+		}
+		/* 上記以外 */
+		else{
+			/* 処理なし */
+		}
+	}
+	/* 上記以外 */
+	else{
+		/* IDLEタスクTGTメイン関数 */
+		tgt_task_main_idle();
+	}
+
+	/* HardTime経過した場合 */
+	if( usS_Ctimer_cycle_hard_tm >= SYS_TIME_CYCLE_HARD_TM ){
+		usS_Ctimer_cycle_hard_tm = 0;											// HardTime周期タスク起動判定用カウンタ
+		
+		/* HardTime周期タスクTGTメイン関数 */
+		tgt_task_main_hard_tm();
+	}
+	/* 上記以外 */
+	else{
+		/* 処理なし */
+	}
+}
+
+/*
+ * タイマ開始処理
+ *
+ * 引数:
+ * ST_SYS_TIME *stW_timer タイマ変数のポインタ
+ *
+ * 復帰値:
+ * なし
+ */
+void sys_lib_StartTimer( ST_SYS_TIME *stW_timer ){
+	stW_timer->ul_time = ulS_Ctimer_sys;										// タイマ計測時間
+}
+
+/*
+ * タイマ停止処理
+ *
+ * 引数:
+ * ST_SYS_TIME *stW_timer タイマ変数のポインタ
+ *
+ * 復帰値:
+ * なし
+ */
+void sys_lib_StopTimer( ST_SYS_TIME *stW_timer ){
+	stW_timer->ul_time = SYS_LIB_TIMER_STOP;									// タイマ計測時間
+}
+
+/*
+ * タイマ満了確認処理
+ *
+ * 引数:
+ * ST_SYS_TIME *stW_timer タイマ変数のポインタ
+ * u_long ulW_Dtime_max   タイマ満了判定時間
+ *
+ * 復帰値:
+ * ON  タイマ満了
+ * OFF タイマ未達
+ */
+u_char sys_lib_CheckTimer( ST_SYS_TIME *stW_timer, u_long ulW_Dtime_max ){
+	u_char ubW_Drcode;															// 戻り値
+	u_long ulW_Dtime_pass;														// タイマ経過時間
+
+	/* タイマ停止状態である場合 */
+	if( stW_timer->ul_time == SYS_LIB_TIMER_STOP ){
+		ubW_Drcode = ON;														// タイマ満了
+	}
+	/* 上記以外 */
+	else{
+		/* システムタイマ(LSB:1ms)が桁あふれしていない場合 */
+		if( ulS_Ctimer_sys >= stW_timer->ul_time ){
+			ulW_Dtime_pass = ulS_Ctimer_sys - stW_timer->ul_time;				// タイマ経過時間
+			
+			/* タイマが満了している場合 */
+			if( ulW_Dtime_pass >= ulW_Dtime_max ){
+				ubW_Drcode = ON;												// タイマ満了
+			}
+			/* 上記以外 */
+			else{
+				ubW_Drcode = OFF;												// タイマ未達
+			}
+		}
+		/* 上記以外 */
+		else{
+			ubW_Drcode = ON;													// タイマ満了
+		}
+	}
+
+	return ubW_Drcode;
+}
+
+/*
+ * Timer2割込み関数
+ *
+ * 引数:
+ * なし
+ *
+ * 復帰値:
+ * なし
+ */
+static void sys_intr_timer2( void ){
+	ulS_Ctimer_sys++;															// システムタイマ(LSB:1ms)
+	ubS_Ctimer_cycle_10ms++;													// 10ms周期タスク起動判定用カウンタ
+	usS_Ctimer_cycle_hard_tm++;													// HardTime周期タスク起動判定用カウンタ
+
+	/* 1ms割込みTGTメイン関数 */
+	tgt_intr_main_1ms();
+}
+
